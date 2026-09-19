@@ -1,6 +1,7 @@
 package startup.vn.pharmacyservice.controllers;
 
 import java.math.BigDecimal;
+import java.util.concurrent.CompletableFuture;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cloud.context.config.annotation.RefreshScope;
@@ -30,5 +31,10 @@ public class BillController {
     @PostMapping
     public BillResponse calculate(@RequestBody BillRequest request) {
         return billService.createBill(request, vatRate);
+    }
+
+    @PostMapping("/insurance")
+    public CompletableFuture<BillResponse> calculateWithInsurance(@RequestBody BillRequest request) {
+        return billService.createBillWithInsurance(request, vatRate);
     }
 }

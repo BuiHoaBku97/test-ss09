@@ -2,6 +2,7 @@ package startup.vn.pharmacyservice.services;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.concurrent.CompletableFuture;
 
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.ResourceAccessException;
@@ -11,6 +12,12 @@ import io.github.resilience4j.retry.annotation.Retry;
 
 @Service
 public class BillService {
+
+    private final InsuranceService insuranceService;
+
+    public BillService(InsuranceService insuranceService) {
+        this.insuranceService = insuranceService;
+    }
 
     @RateLimiter(name = "invoiceRateLimiter", fallbackMethod = "rateLimitFallback")
     @Retry(name = "invoiceRetry", fallbackMethod = "retryFallback")
@@ -34,6 +41,34 @@ public class BillService {
                 total,
                 "ISSUED",
                 "Electronic invoice created");
+    }
+
+    public CompletableFuture<BillResponse> createBillWithInsurance(
+            BillRequest request,
+            BigDecimal vatRate) {
+        return insuranceService.validate(request)
+                .thenApply(insurance -> calculateInsuranceBill(request, vatRate, insurance));
+    }
+
+    private BillResponse calculateInsuranceBill(
+            BillRequest request,
+            BigDecimal vatRate,
+            InsuranceService.InsuranceResult insurance) {
+        BigDecimal medicineTotal = request.medicineTotal();
+        BigDecimal discount = insurance.validated()
+                ? medicineTotal.multiply(insurance.discountRate()).setScale(2, RoundingMode.HALF_UP)
+                : BigDecimal.ZERO.setScale(2);
+        BigDecimal total = medicineTotal.subtract(discount).setScale(2, RoundingMode.HALF_UP);
+
+        return new BillResponse(
+                medicineTotal,
+                vatRate,
+                BigDecimal.ZERO.setScale(2),
+                total,
+                insurance.validated() ? "INSURANCE_VALIDATED" : "PENDING",
+                insurance.validated()
+                        ? "Insurance validated and discount applied"
+                        : "Insurance validation pending; undiscounted medicine price");
     }
 
     private BillResponse retryFallback(
@@ -73,7 +108,15 @@ public class BillService {
 
     public record BillRequest(
             BigDecimal medicineTotal,
-            boolean simulateNetworkFailure) {
+            boolean simulateNetworkFailure,
+            boolean simulateInsuranceTimeout,
+            boolean simulateInsuranceFailure,
+            BigDecimal insuranceDiscountRate) {
+        public BillRequest {
+            if (insuranceDiscountRate == null) {
+                insuranceDiscountRate = BigDecimal.ZERO;
+            }
+        }
     }
 
     public record BillResponse(
